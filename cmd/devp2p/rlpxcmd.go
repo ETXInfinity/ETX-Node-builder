@@ -1,0 +1,125 @@
+// Copyright 2020 The go-ETX Authors
+// This file is part of go-ETX.
+//
+// go-ETX is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// go-ETX is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with go-ETX. If not, see <http://www.gnu.org/licenses/>.
+
+package main
+
+import (
+	"fmt"
+	"net"
+
+	"github.com/ETX/go-ETX/cmd/devp2p/internal/etxtest"
+	"github.com/ETX/go-ETX/crypto"
+	"github.com/ETX/go-ETX/p2p"
+	"github.com/ETX/go-ETX/p2p/rlpx"
+	"github.com/ETX/go-ETX/rlp"
+	"github.com/urfave/cli/v2"
+)
+
+var (
+	rlpxCommand = &cli.Command{
+		Name:  "rlpx",
+		Usage: "RLPx Commands",
+		Subcommands: []*cli.Command{
+			rlpxPingCommand,
+			rlpxetxTestCommand,
+			rlpxSnapTestCommand,
+		},
+	}
+	rlpxPingCommand = &cli.Command{
+		Name:   "ping",
+		Usage:  "ping <node>",
+		Action: rlpxPing,
+	}
+	rlpxetxTestCommand = &cli.Command{
+		Name:      "etx-test",
+		Usage:     "Runs tests against a node",
+		ArgsUsage: "<node> <chain.rlp> <genesis.json>",
+		Action:    rlpxetxTest,
+		Flags: []cli.Flag{
+			testPatternFlag,
+			testTAPFlag,
+		},
+	}
+	rlpxSnapTestCommand = &cli.Command{
+		Name:      "snap-test",
+		Usage:     "Runs tests against a node",
+		ArgsUsage: "<node> <chain.rlp> <genesis.json>",
+		Action:    rlpxSnapTest,
+		Flags: []cli.Flag{
+			testPatternFlag,
+			testTAPFlag,
+		},
+	}
+)
+
+func rlpxPing(ctx *cli.Context) error {
+	n := getNodeArg(ctx)
+	fd, err := net.Dial("tcp", fmt.Sprintf("%v:%d", n.IP(), n.TCP()))
+	if err != nil {
+		return err
+	}
+	conn := rlpx.NewConn(fd, n.Pubkey())
+	ourKey, _ := crypto.GenerateKey()
+	_, err = conn.Handshake(ourKey)
+	if err != nil {
+		return err
+	}
+	code, data, _, err := conn.Read()
+	if err != nil {
+		return err
+	}
+	switch code {
+	case 0:
+		var h etxtest.Hello
+		if err := rlp.DecodeBytes(data, &h); err != nil {
+			return fmt.Errorf("invalid handshake: %v", err)
+		}
+		fmt.Printf("%+v\n", h)
+	case 1:
+		var msg []p2p.DiscReason
+		if rlp.DecodeBytes(data, &msg); len(msg) == 0 {
+			return fmt.Errorf("invalid disconnect message")
+		}
+		return fmt.Errorf("received disconnect message: %v", msg[0])
+	default:
+		return fmt.Errorf("invalid message code %d, expected handshake (code zero)", code)
+	}
+	return nil
+}
+
+// rlpxetxTest runs the etx protocol test suite.
+func rlpxetxTest(ctx *cli.Context) error {
+	if ctx.NArg() < 3 {
+		exit("missing path to chain.rlp as command-line argument")
+	}
+	suite, err := etxtest.NewSuite(getNodeArg(ctx), ctx.Args().Get(1), ctx.Args().Get(2))
+	if err != nil {
+		exit(err)
+	}
+	return runTests(ctx, suite.etxTests())
+}
+
+// rlpxSnapTest runs the snap protocol test suite.
+func rlpxSnapTest(ctx *cli.Context) error {
+	if ctx.NArg() < 3 {
+		exit("missing path to chain.rlp as command-line argument")
+	}
+	suite, err := etxtest.NewSuite(getNodeArg(ctx), ctx.Args().Get(1), ctx.Args().Get(2))
+	if err != nil {
+		exit(err)
+	}
+	return runTests(ctx, suite.SnapTests())
+}

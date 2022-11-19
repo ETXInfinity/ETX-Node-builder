@@ -1,0 +1,5 @@
+build/bin/{{.BinaryName}} usr/bin
+{{- if eq .BinaryName "getx" }}
+build/deb/ETX/completions/bash/getx etc/bash_completion.d
+build/deb/ETX/completions/zsh/_getx usr/share/zsh/vendor-completions
+{{end -}}
